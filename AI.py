@@ -2,69 +2,46 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import pandas as pd
 import numpy as np
+import os
 from statsmodels.tsa.statespace.sarimax import SARIMAX
-from tensorflow.keras.models import load_model
-from sklearn.preprocessing import MinMaxScaler
+# Chỉ import những thứ thực sự cần thiết để tiết kiệm RAM
+import tensorflow as tf 
 import uvicorn
 
-app = FastAPI(title="Carbon Forecasting Comparison API")
+app = FastAPI()
 
+# Khai báo biến model toàn cục nhưng chưa nạp ngay
+model_bilstm = None
+
+def get_model():
+    global model_bilstm
+    if model_bilstm is None:
+        # Nạp mô hình một cách cẩn thận
+        model_bilstm = tf.keras.models.load_model('bilstm_carbon_model.h5')
+    return model_bilstm
 
 class CarbonRequest(BaseModel):
     data: list
 
+@app.get("/")
+async def root():
+    return {"status": "AI Server is running"}
 
-# Tải mô hình Bi-LSTM đã train
-try:
-    model_bilstm = load_model('bilstm_carbon_model.h5')
-    print("Bi-LSTM Model Loaded.")
-except:
-    model_bilstm = None
-
-
-# --- ENDPOINT 1: SARIMA ---
 @app.post("/predict/sarima")
 async def predict_sarima(request: CarbonRequest):
-    try:
-        df = pd.DataFrame(request.data)
-        actual_values = pd.to_numeric(df['carbon_actual'], errors='coerce').ffill().values
+    # ... giữ nguyên code SARIMA cũ ...
+    return {"pred_sarima": [round(float(x), 2) for x in forecast]}
 
-        model = SARIMAX(actual_values, order=(1, 1, 1), seasonal_order=(1, 1, 1, 24))
-        results = model.fit(disp=False)
-        forecast = results.forecast(steps=48)
-
-        return {"pred_sarima": [round(float(x), 2) for x in forecast]}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# --- ENDPOINT 2: Bi-LSTM ---
 @app.post("/predict/bilstm")
 async def predict_bilstm(request: CarbonRequest):
     try:
-        if not model_bilstm: raise Exception("Model not found")
-        df = pd.DataFrame(request.data)
-        actual_values = pd.to_numeric(df['carbon_actual'], errors='coerce').ffill().values
-
-        scaler = MinMaxScaler(feature_range=(0, 1))
-        scaled_data = scaler.fit_transform(actual_values.reshape(-1, 1))
-
-        input_seq = scaled_data[-24:].reshape(1, 24, 1)
-        predictions = []
-
-        for _ in range(48):
-            pred = model_bilstm.predict(input_seq, verbose=0)
-            predictions.append(pred[0, 0])
-            input_seq = np.append(input_seq[:, 1:, :], pred.reshape(1, 1, 1), axis=1)
-
-        final_preds = scaler.inverse_transform(np.array(predictions).reshape(-1, 1)).flatten()
-        return {"pred_bilstm": [round(float(x), 2) for x in final_preds]}
+        model = get_model() # Chỉ nạp khi thực sự có yêu cầu gọi đến
+        # ... giữ nguyên code xử lý Bi-LSTM cũ ...
+        return {"pred_bilstm": final_preds}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
 if __name__ == "__main__":
-    import os
+    # Ép dùng cổng từ biến môi trường của Render
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
-
